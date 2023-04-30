@@ -24,6 +24,7 @@ In one terminal, run qemu:
 qemu-system-aarch64 -M raspi3b -kernel ./build/kernel8.elf -s -S -smp 4 -serial null -serial stdio 
 ```
 
+### GDB
 In another, run gdb and connect it to qemu:
 
 ```bash
@@ -42,6 +43,37 @@ Execution will be paused initially with all cores showing:
 ```
 
 You can hit `c` to allow execution to continue, or use `s` to step through while the code runs.
+
+### LLDB
+
+```bash
+lldb ./build/kernel.elf
+```
+
+Once lldb loads, run:
+
+```bash
+gdb-remote localhost:1234
+```
+
+Then you can view threads with:
+
+```
+(lldb) thread list
+Process 1 stopped
+* thread #1: tid = 0x0001, 0x0000000000000080 kernel8.elf`uart_send(c='p') at mini_uart.c:8, stop reason = step in
+  thread #2: tid = 0x0002, 0x0000000000000074 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+  thread #3: tid = 0x0003, 0x0000000000000074 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+  thread #4: tid = 0x0004, 0x0000000000000074 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+```
+
+You can hit `c` to allow execution to continue, or use `s` to step through while the code runs.
+
+Using `s` within `lldb` limits the step to the currently-selected thread. You can switch threads with `thread select X` where `X` is the thread ID.
+
+* Set breakpoints using: `breakpoint set --name kmain`.
+* Dump symbol address: `image lookup --address 0x000000000000009c`
+
 
 ## Issues
 

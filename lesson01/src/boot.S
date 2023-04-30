@@ -6,7 +6,58 @@
 _start:
 	 nop
 	 nop
-	// nop					// Uncommenting this line will cause all of the cores to try and initialize the Uart and they get stuck.
+	 //nop					// Uncommenting this line will cause all of the cores to try and initialize the Uart and they get stuck.
+
+	/*
+		Undefined Instruction Exception:
+
+		When I uncomment the `nop` opcode, lldb shows me this:
+
+			(lldb) next
+			Process 1 stopped
+			* thread #1, stop reason = step over
+				frame #0: 0x0000000000000000 kernel8.elf
+			->  0x0: udf    #0x0
+				0x4: nop
+				0x8: nop
+				0xc: mrs    x0, MPIDR_EL1
+
+		I'm interested in the `udf` opcode, which is an "Undefined Instruction Exception" (F5.1.269). This seems to be what causes
+		the infinite loop. When we hit it, the PC jumps back to 0x0200 and the code starts all over again:
+
+			(lldb) next
+			Process 1 stopped
+			* thread #4, stop reason = step over
+				frame #0: 0x0000000000000000 kernel8.elf
+			->  0x0: udf    #0x0
+				0x4: nop
+				0x8: nop
+				0xc: mrs    x0, MPIDR_EL1
+			Target 0: (kernel8.elf) stopped.
+
+			(lldb) next
+			Process 1 stopped
+			* thread #4, stop reason = instruction step over
+				frame #0: 0x0000000000000200 kernel8.elf`uart_init at mini_uart.c:48
+			Target 0: (kernel8.elf) stopped.
+
+		This is interesting because the objdump of boot_s.o shows three `nop` opcodes and not a `udf`:
+
+			$ objdump --arch=aarch64 -d ./build/boot_s.o:
+
+				0000000000000000 <_start>:
+					0: 1f 20 03 d5  	nop
+					4: 1f 20 03 d5  	nop
+					8: 1f 20 03 d5  	nop
+					c: a0 00 38 d5  	mrs	x0, MPIDR_EL1
+					10: 00 1c 40 92  	and	x0, x0, #0xff
+					14: e2 03 00 aa  	mov	x2, x0
+
+		Perhaps the UDF is injected because the previous operation resulted in an exception.
+
+		I need to get real hardware to check if this is a result of qemu booting elf files in the way Linux expects.
+		It may be worth booting kernel8.img and having the code start the other cores to check.
+	*/
 
 	/*
 		This is the gdb view when having the wrong number of NOPs in place. Thread 1 (CPU#0) jumps to some unknown frame, which also happens
@@ -74,7 +125,7 @@ _start:
 	mrs	x0, mpidr_el1		
 	and	x0, x0, #0xFF					// Check processor id
 	mov x2, x0 							// Backup the processor id
-
+procid:
 	cbz	x0, master						// Core 0 is in charge of initializing the uart and zeroing .bss
 	b 	nonmaster						// All other cores initialize their own SP and then try to use the uart.
 
@@ -85,7 +136,7 @@ nonmaster:
 	mrs	x19, mpidr_el1		
 	and	x19, x19, #0xFF					// Check processor id again...but why cant we use the previous value? TODO: Figure that out.
 
-	sub x18, x19, #0					// Chose which other core is active. Using #0 means all cores are active.
+	sub x18, x19, #1					// Chose which other core is active. Using #0 means all cores are active.
 	cbz x18, proc_hang
 
 	mov 	x0, SECONDARY_STACK_START	// Secondary stack size is 1MB

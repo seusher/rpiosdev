@@ -199,7 +199,7 @@ nonmaster:
 	mrs	x19, mpidr_el1		
 	and	x19, x19, #0xFF					// Check processor id again...but why cant we use the previous value? TODO: Figure that out.
 
-	sub x18, x19, #1					// Chose which other core is active. Using #0 means all cores are active.
+	sub x18, x19, #0					// Chose which other core is active. Using #0 means all cores are active.
 	cbz x18, proc_hang
 
 	mov 	x0, SECONDARY_STACK_START	// Secondary stack size is 1MB

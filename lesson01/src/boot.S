@@ -9,11 +9,6 @@ _start:
 	 //nop					// Uncommenting this line will cause all of the cores to try and initialize the Uart and they get stuck.
 
 	/*
-		TODO: Break right before the `udf` opcode is called and check the exception registers to see what caused
-			  the exception...assuming this is the right line of thinking.
-	*/
-
-	/*
 		Code Execution:
 
 		The code always seems to start all cores running at memory location 0x078:
@@ -25,7 +20,7 @@ _start:
 			thread #3: tid = 0x0003, 0x0000000000000078 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
 			thread #4: tid = 0x0004, 0x0000000000000078 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
 
-		This is the start of the .text section and not the .text.boot section:
+		This is the start of the `.text` section and not the `.text.boot` section, which makes sense since `.text` is the code section.
 
 		$ objdump --arch=aarch64 -d ./build/kernel_c.o
 
@@ -79,6 +74,12 @@ _start:
 			(lldb) next
 			Process 1 stopped
 			* thread #1, stop reason = step over
+				frame #0: 0x000000000000026c kernel8.elf`uart_init at mini_uart.c:56
+			Target 0: (kernel8.elf) stopped.
+
+			(lldb) next
+			Process 1 stopped
+			* thread #1, stop reason = step over
 				frame #0: 0x0000000000000000 kernel8.elf
 			->  0x0: udf    #0x0
 				0x4: nop
@@ -104,6 +105,8 @@ _start:
 				frame #0: 0x0000000000000200 kernel8.elf`uart_init at mini_uart.c:48
 			Target 0: (kernel8.elf) stopped.
 
+		The code at address 0x026c is the `ret` opcode at the end up uart_init().
+
 		This is interesting because the objdump of boot_s.o shows three `nop` opcodes and not a `udf`:
 
 			$ objdump --arch=aarch64 -d ./build/boot_s.o:
@@ -120,6 +123,123 @@ _start:
 
 		I need to get real hardware to check if this is a result of qemu booting elf files in the way Linux expects.
 		It may be worth booting kernel8.img and having the code start the other cores to check.
+
+		If I set a breakpoint at 0x026c and look at the x30 reg (Link Return), it's set to '0xd53800a0d503201f':
+
+			(lldb) br set -a 0x000000000000026c
+				Breakpoint 1: where = kernel8.elf`uart_init + 272 at mini_uart.c:56, address = 0x000000000000026c
+			(lldb) c
+			Process 1 resuming
+
+			Process 1 stopped
+			* thread #4, stop reason = breakpoint 1.1
+				frame #0: 0x000000000000026c kernel8.elf`uart_init at mini_uart.c:56
+			Target 0: (kernel8.elf) stopped.
+			(lldb) thread list
+			Process 1 stopped
+			thread #1: tid = 0x0001, 0x0000000000000310 kernel8.elf`put32 + 4
+			thread #2: tid = 0x0002, 0x000000000000026c kernel8.elf`uart_init at mini_uart.c:56
+			thread #3: tid = 0x0003, 0x0000000000000310 kernel8.elf`put32 + 4
+			* thread #4: tid = 0x0004, 0x000000000000026c kernel8.elf`uart_init at mini_uart.c:56, stop reason = breakpoint 1.1
+			(lldb) register read
+			general:
+					x0 = 0x000000003f215060
+					x1 = 0x0000000000000003
+					...[omitted regs have a value of 0x0]...
+					x29 = 0xd503201f00000000
+					x30 = 0xd53800a0d503201f
+					sp = 0x0000000000000020
+					pc = 0x000000000000026c  kernel8.elf`uart_init + 272 at mini_uart.c:56
+
+		The next execution tries to return to a memory address that's based on x30 and fails:
+
+			(lldb) next
+			Process 1 stopped
+			* thread #4, stop reason = step over failed (Could not create return address breakpoint.)
+				frame #0: 0x00000020d503201f
+			error: memory read failed for 0x20d5032000
+			Target 0: (kernel8.elf) stopped.
+			(lldb) thread list
+			Process 1 stopped
+			thread #1: tid = 0x0001, 0x0000000000000310 kernel8.elf`put32 + 4
+			thread #2: tid = 0x0002, 0x000000000000026c kernel8.elf`uart_init at mini_uart.c:56
+			thread #3: tid = 0x0003, 0x0000000000000310 kernel8.elf`put32 + 4
+			* thread #4: tid = 0x0004, 0x00000020d503201f, stop reason = step over failed (Could not create return address breakpoint.)
+
+		Even in the *working scenario*, we end up in a similar situation, and it somehow recovers:
+
+			(lldb) br set -a 0x268
+			Breakpoint 1: where = kernel8.elf`uart_init + 272 at mini_uart.c:56, address = 0x0000000000000268
+			(lldb) c
+			Process 1 resuming
+
+			Process 1 stopped
+			* thread #4, stop reason = breakpoint 1.1
+				frame #0: 0x0000000000000268 kernel8.elf`uart_init at mini_uart.c:56
+			Target 0: (kernel8.elf) stopped.
+			(lldb) thread info
+			thread #4: tid = 0x0004, 0x0000000000000268 kernel8.elf`uart_init at mini_uart.c:56, stop reason = breakpoint 1.1
+
+			(lldb) thread list
+			Process 1 stopped
+			thread #1: tid = 0x0001, 0x0000000000000268 kernel8.elf`uart_init at mini_uart.c:56
+			thread #2: tid = 0x0002, 0x0000000000000268 kernel8.elf`uart_init at mini_uart.c:56
+			thread #3: tid = 0x0003, 0x0000000000000074 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+			* thread #4: tid = 0x0004, 0x0000000000000268 kernel8.elf`uart_init at mini_uart.c:56, stop reason = breakpoint 1.1
+
+			(lldb) register read
+			general:
+					x0 = 0x000000003f215060
+					x1 = 0x0000000000000003
+					...[omitted regs have a value of 0x0]...
+					x29 = 0xd503201fd503201f
+					x30 = 0x92401c00d53800a0
+					sp = 0x0000000000000020
+					pc = 0x0000000000000268  kernel8.elf`uart_init + 272 at mini_uart.c:56
+					cpsr = 0x000003cd
+
+			(lldb) si
+			Process 1 stopped
+			* thread #4, stop reason = instruction step into
+				frame #0: 0x00000000d53800a0
+			error: memory read failed for 0xd5380000
+			Target 0: (kernel8.elf) stopped.
+
+			(lldb) si
+			Process 1 stopped
+			* thread #4, stop reason = instruction step into
+				frame #0: 0x0000000000000200 kernel8.elf`uart_init at mini_uart.c:49
+			Target 0: (kernel8.elf) stopped.
+
+			(lldb) si
+			Process 1 stopped
+			* thread #4, stop reason = instruction step into
+				frame #0: 0x0000000000000204 kernel8.elf`uart_init at mini_uart.c:49
+			Target 0: (kernel8.elf) stopped.
+
+			(lldb) si
+			Process 1 stopped
+			* thread #4, stop reason = instruction step into
+				frame #0: 0x0000000000000208 kernel8.elf`uart_init at mini_uart.c:49
+			Target 0: (kernel8.elf) stopped.
+
+		Somehow the code went from jumping to 0xd5380000 and failing, to running at 0x200, which is the line right after
+		where uart_init() jumps to put32() to call `put32(AUX_MU_CNTL_REG,0)`:
+
+			1f0: 21 00 80 52  	mov	w1, #1
+			1f4: 80 00 8a d2  	mov	x0, #20484
+			1f8: 20 e4 a7 f2  	movk	x0, #16161, lsl #16
+			1fc: 43 00 00 94  	bl	0x308 <put32>
+			200: 01 00 80 52  	mov	w1, #0
+			204: 00 0c 8a d2  	mov	x0, #20576
+			208: 20 e4 a7 f2  	movk	x0, #16161, lsl #16
+			20c: 3f 00 00 94  	bl	0x308 <put32>
+
+		Since this all seems to happen around:
+
+			264: fd 7b c2 a8  	ldp	x29, x30, [sp], #32
+
+		I wonder if I'm not setting up the stack space for each core correctly and that's causing issues.
 	*/
 
 	/*

@@ -16,7 +16,7 @@ void kernel_main(int core)
 
 void kernel_other(int core)
 {
-	delay(core * 500000);
+	delay(core * 5000000);
 
 	char* msg = "\r\nsecondary: ";
 	uart_send_string(msg);

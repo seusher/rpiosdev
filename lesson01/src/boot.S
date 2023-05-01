@@ -9,6 +9,15 @@ _start:
 	 //nop					// Uncommenting this line will cause all of the cores to try and initialize the Uart and they get stuck.
 
 	/*
+		I found this StackOverflow answer: https://stackoverflow.com/questions/58420670/qemu-bios-vs-kernel-vs-device-loader-file/58434837#58434837
+
+		By replacing `-kernel ./build/kernel8.elf` with `-device loader,file=./kernel8.img`, I was able to run the code successfully
+		regardless of how many nop opcodes are in the code. This must have been related to the way qemu was booting.
+
+		I haven't walked through wit hlldb, but its been working with 0 or more nops.
+	*/
+
+	/*
 		Code Execution:
 
 		The code always seems to start all cores running at memory location 0x078:

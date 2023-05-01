@@ -9,6 +9,69 @@ _start:
 	 //nop					// Uncommenting this line will cause all of the cores to try and initialize the Uart and they get stuck.
 
 	/*
+		TODO: Break right before the `udf` opcode is called and check the exception registers to see what caused
+			  the exception...assuming this is the right line of thinking.
+	*/
+
+	/*
+		Code Execution:
+
+		The code always seems to start all cores running at memory location 0x078:
+
+			(lldb) thread list
+			Process 1 stopped
+			* thread #1: tid = 0x0001, 0x0000000000000078 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6, stop reason = signal SIGTRAP
+			thread #2: tid = 0x0002, 0x0000000000000078 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+			thread #3: tid = 0x0003, 0x0000000000000078 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+			thread #4: tid = 0x0004, 0x0000000000000078 kernel8.elf`uart_send(c=<unavailable>) at mini_uart.c:6
+
+		This is the start of the .text section and not the .text.boot section:
+
+		$ objdump --arch=aarch64 -d ./build/kernel_c.o
+
+		Disassembly of section .text.boot:
+
+			0000000000000000 <_start>:
+				0: 1f 20 03 d5  	nop
+				4: 1f 20 03 d5  	nop
+				8: 1f 20 03 d5  	nop
+				c: a0 00 38 d5  	mrs	x0, MPIDR_EL1
+				10: 00 1c 40 92  	and	x0, x0, #0xff
+				14: e2 03 00 aa  	mov	x2, x0
+
+				...
+				[The rest of the code in .text.boot]
+				...
+
+			Disassembly of section .text:
+
+			0000000000000078 <uart_send>:
+				78: fd 7b be a9  	stp	x29, x30, [sp, #-32]!
+				7c: fd 03 00 91  	mov	x29, sp
+				80: a0 7f 00 39  	strb	w0, [x29, #31]
+				84: 80 0a 8a d2  	mov	x0, #20564
+
+				...
+				[The rest of the code in .text]
+				...
+
+			I wonder if this is causing issues since all of the cores are running the uart_send() code which won't even have been invoked
+			properly, the uart won't have been set up, and these cores all need to start at PC = 0x0000 to figure out if they should run
+			uart initialization code at all.
+
+			From https://wiki.osdev.org/Raspberry_Pi:
+
+			When the RPi powers up the ARM CPU is halted and the GPU runs. The GPU loads the bootloader from rom and executes it. 
+			That then finds the SD card and loads the bootcode.bin. The bootcode handles the config.txt and cmdline.txt 
+			(or does start.elf read that?) and then runs start.elf. start.elf loads the kernel.img at 0x00008000, puts a few opcodes 
+			at 0x00000000 and the ATAGS at 0x00000100 and at last the ARM CPU is started. The CPU starts executing at 0x00000000, where 
+			it will initialize r0, r1 and r2 and jump to 0x00008000 where the kernel image starts.
+
+			I wonder if this is part of the problem, and it is the difference between elf loading (which does things the Linux way) and
+			kernel8.img loading, which does things the Pi way, but only runs the img on one core.
+	*/
+
+	/*
 		Undefined Instruction Exception:
 
 		When I uncomment the `nop` opcode, lldb shows me this:

@@ -45,6 +45,9 @@ el2_entry:
 	adr	x0, el1_entry		
 	msr	elr_el2, x0
 
+	ldr x0, =CPACR_ENABLE_FPEN
+	msr cpacr_el1, x0
+
 	eret			
 
 el1_entry:
